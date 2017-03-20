@@ -8,6 +8,10 @@
 library(shiny)
 
 shinyServer(function(input, output) {
+  
+  output$carte <- renderLeaflet({
+    leaflet()  %>% addTiles()
+  })
 
   output$distPlot <- renderPlot({
 
