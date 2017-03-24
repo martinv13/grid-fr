@@ -9,22 +9,31 @@ library(shiny)
 
 shinyUI(fluidPage(
 
-  # Application title
-  titlePanel("Old Faithful Geyser Data"),
-
   # Sidebar with a slider input for number of bins
-  sidebarLayout(
-    sidebarPanel(
-      sliderInput("bins",
-                  "Number of bins:",
-                  min = 1,
-                  max = 50,
-                  value = 30)
+  fluidRow(
+    column(3,
+           sliderInput("scaleX",NULL,
+                  min = 0.1,
+                  max = 2,
+                  value = scaleX),
+           sliderInput("scaleY",NULL,
+                       min = 0.1,
+                       max = 2,
+                       value = scaleY),
+           sliderInput("x0",NULL,
+                       min = -100,
+                       max = 100,
+                       value = x0),
+           sliderInput("y0",NULL,
+                       min = -100,
+                       max = 100,
+                       value = y0)
+           
     ),
 
     # Show a plot of the generated distribution
-    mainPanel(
-      plotOutput("distPlot")
+    column(9,
+      leafletOutput("carte", height = 900)
     )
   )
 ))

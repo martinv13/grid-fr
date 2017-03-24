@@ -36,8 +36,17 @@ postes
 
 nuts2.df
 nuts2.spdf[[match("FR41",nuts2.spdf$id)]]
-
 gArea(nuts2.spdf, byid=TRUE)
+
+
+reg <- subset(nuts3.spdf, substr(nuts3.spdf$id,1,2) == "FR")
+regp <- spTransform(reg, "+init=epsg:4326")
+
+leaflet(regp) %>% 
+  addTiles() %>%
+  addPolygons(color = "#444444", weight = 1, smoothFactor = 0.5,
+              opacity = 1.0, fillOpacity = 0.5,
+              fillColor = "#aa5555", popup=~id)
 
 
 lignes <- fread("lines.csv", dec=",", sep=";")
@@ -47,9 +56,11 @@ lignes <- lignes[!is.na(x_fin)&!is.na(x_debut)]
 
 x0 <- -2.0037508342787E7
 y0 <- 2.0037508342787E7
-cord.UTM <- SpatialPoints(cbind(lignes$x_debut, lignes$y_debut), proj4string=CRS("+proj=epsg:3857"))
-cord.dec <- spTransform(cord.UTM, CRS("+proj=longlat"))
+cord.UTM <- SpatialPoints(cbind(lignes$x_debut, lignes$y_debut), proj4string=CRS("+init=epsg:3857"))
+cord.dec <- spTransform(cord.UTM, "+init=epsg:4326")
 cord.dec
+
+leaflet(cord.dec) %>% addTiles() %>% addMarkers()
 
 scale<-list(x=1.31963E-05,
             x0=-6.389136388,

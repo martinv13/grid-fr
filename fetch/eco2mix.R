@@ -1,4 +1,6 @@
 
+nuts <- fread("data/codes_nuts.txt")
+
 regions <- c("Grand-Est",
              "Nouvelle-Aquitaine",
              "Auvergne-Rhône-Alpes",
@@ -11,6 +13,8 @@ regions <- c("Grand-Est",
              "Normandie",
              "Pays-de-la-Loire",
              "PACA")
+
+nuts2.df
 
 eco2mix <- lapply(regions, function(rg){
   # url <- URLencode(paste0("http://eco2mix.rte-france.com/download/eco2mix/eCO2mix_RTE_",
