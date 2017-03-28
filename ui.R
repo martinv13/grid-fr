@@ -15,19 +15,19 @@ shinyUI(fluidPage(
            sliderInput("scaleX",NULL,
                   min = 0.1,
                   max = 2,
-                  value = scaleX),
+                  value = 0),
            sliderInput("scaleY",NULL,
                        min = 0.1,
                        max = 2,
-                       value = scaleY),
+                       value = 0),
            sliderInput("x0",NULL,
                        min = -100,
                        max = 100,
-                       value = x0),
+                       value = 0),
            sliderInput("y0",NULL,
                        min = -100,
                        max = 100,
-                       value = y0)
+                       value = 0)
            
     ),
 
