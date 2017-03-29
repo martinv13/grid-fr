@@ -20,7 +20,7 @@ points <- lapply(c(1:3,7:10), function(i){
 postes <- rbindlist(points[1:3])[U_MAX>5,]
 postes <- unique(postes, by="CODNAT")
 
-# conversion des lignes
+# extraction des lignes
 lines <- lapply(4:6, function(i){
   lapply(layers[[i]], function(ch){
     temp <- as.list(ch$features)
@@ -30,11 +30,13 @@ lines <- lapply(4:6, function(i){
   }) %>% rbindlist
 })
 
-lines <- rbindlist(lines)
-#write.table(lines[,-21,with=FALSE], file="lignes_raw.csv", sep=";", dec=",", row.names = FALSE)
+lines <- rbindlist(lines, idcol="layer")
 
 lines[,ID_OBJECT:=paste(ID, OBJECTID, sep="_")]
-lines <- unique(lines, by="ID_OBJECT")[U_MAX>5 & ETAT=="E" ,]
+lines <- unique(lines, by="ID_OBJECT")[U_MAX>5 & ETAT=="E" & layer==1 ,]
+lines[,ID_PATH:=.GRP, by=.(IDR_LIT_1,ADR_LIT_1,IDR_LIT_2,ADR_LIT_2,
+                               IDR_LIT_3,ADR_LIT_3,IDR_LIT_4,ADR_LIT_4,
+                               IDR_LIT_5,ADR_LIT_5)]
 
 lines[, c("x_start","y_start","x_end","y_end"):={
   xs <- .SD$paths[[1]][,,1]
@@ -42,7 +44,35 @@ lines[, c("x_start","y_start","x_end","y_end"):={
   .(xs[1],ys[1],tail(xs,n=1),tail(ys,n=1))
 }, by=ID_OBJECT]
 
-lines <- unique(lines, by=c("x_start","y_start","x_end","y_end","U_MAX"))
+lines <- unique(lines, by=c("ID_PATH","x_start","y_start","x_end","y_end","U_MAX"))
+
+
+# correspondance modèle de réseau
+lines_car <- fread("lignes_raw.csv")
+adr_lines <- lines[,-c("paths"),with=FALSE] %>%
+  melt(measure.vars = 9:18)
+adr_lines[,variable:=as.character(variable)]
+adr_lines[,c("variable", "sub_num"):=.(substr(variable, 1, 7), 
+                                   as.numeric(substr(variable, 9, 9)))]
+adr_lines <- spread(adr_lines,variable, value)
+setDT(adr_lines)
+adr_lines <- adr_lines[!is.na(ADR_LIT)]
+
+lines_car <- adr_lines[,.(`Identifiant géographique / Asset location`=ADR_LIT,
+                          ID_PATH,sub_num,matched=ADR_LIT)][lines_car, 
+                          on="Identifiant géographique / Asset location", mult="first"]
+lines_car[is.na(matched), 
+          c("adr","matched","matched_id","dist"):= {
+            id_dist <- adist(`Identifiant géographique / Asset location`,adr_lines$ADR_LIT)
+            id_dist[is.na(id_dist)] <- 1000
+            id_min <- apply(id_dist, 1, which.min)
+            id_dist <- apply(id_dist, 1, min)
+            .(`Identifiant géographique / Asset location`,
+              adr_lines$ADR_LIT[id_min],
+              adr_lines$ID_PATH[id_min],
+              id_dist)
+          }]
+View(lines_car[!is.na(dist)])
 
 # extraire les noeuds
 ends <- melt(lines[,.(ID_OBJECT, U_MAX, x_start,x_end,y_start,y_end)],
@@ -67,7 +97,7 @@ lines <- ends[side=="start",
               .(ID_OBJECT,node2=node,nb2=nb)][lines, on="ID_OBJECT", mult="first"]
 setcolorder(lines, c("node1","node2","nb1","nb2","ID_OBJECT",colnames(lines)[6:dim(lines)[2]]))
 
-graph <- graph_from_data_frame(lines[nb1==2 & nb2==2],directed=FALSE)
+graph <- graph_from_data_frame(lines,directed=FALSE)
 
 cl <- clusters(graph)
 
@@ -127,29 +157,26 @@ spl_lines <- spTransform(spl_lines, "+init=epsg:4326")
 
 sub <- ends[dist>2000 & nb>2,][order(dist)]
 
-leaflet(subset(spl_lines, spl_lines$node2 %in% sub$node |
-                 spl_lines$node1  %in% sub$node )) %>%
+colrs <- ifelse(spl_lines$ID_PATH %in% lines_car$ID_PATH, "#ff0000", "#0000ff" )
+colrs <- ifelse(spl_lines$group_line!=1 , "#ff0000", "#0000ff" )
+
+leaflet(spl_lines) %>%
   addTiles() %>%
   addPolylines(popup=~paste0("<h3>",ID_OBJECT,"</h3>",
-                            ADR_LIT_1, "<br>",
-                            ADR_LIT_2, "<br>",
-                            ADR_LIT_3, "<br>",
-                            ETAT, "<br>",
-                            U_MAX, "<br>",
-                            as.POSIXct(MAJ_GEO/1000,origin=as.POSIXct("1970-01-01"))))
+                             "layer : ", layer, "<br>",
+                             "ADR1 : ", ADR_LIT_1, "<br>",
+                            "ADR2 : ", ADR_LIT_2, "<br>",
+                            "ADR3 : ", ADR_LIT_3, "<br>",
+                            "ETAT : ", ETAT, "<br>",
+                            "U : ", U_MAX, "<br>",
+                            "MAJ : ", as.POSIXct(MAJ_GEO/1000,origin=as.POSIXct("1970-01-01"))),
+               color=colrs)
 
 
 
 
 
 
-lines <- lines[,-c("paths"),with=FALSE]
-lines <- melt(lines, measure.vars = 8:17)
-lines[,variable:=as.character(variable)]
-lines[,c("variable", "sub_num"):=.(substr(variable, 1, 7), 
-                                   as.numeric(substr(variable, 9, 9)))]
-lines <- spread(lines, variable, value )
-setDT(lines)
 
 lines[,start:=substr(IDR_LIT, 1, 5)]
 lines[,u_code:=as.numeric(substr(IDR_LIT, 7, 7))]
