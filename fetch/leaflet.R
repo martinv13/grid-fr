@@ -13,9 +13,9 @@ points <- lapply(c(1:3,7:10), function(i){
   }) %>% rbindlist
 })
 
-for (i in 1:7) {
-write.table(points[[i]], file=paste0(i,".csv"), sep=";", dec=",", row.names = FALSE)
-}
+# for (i in 1:7) {
+# write.table(points[[i]], file=paste0(i,".csv"), sep=";", dec=",", row.names = FALSE)
+# }
 
 postes <- rbindlist(points[1:3])[U_MAX>5,]
 postes <- unique(postes, by="CODNAT")
@@ -42,16 +42,105 @@ lines[, c("x_start","y_start","x_end","y_end"):={
   .(xs[1],ys[1],tail(xs,n=1),tail(ys,n=1))
 }, by=ID_OBJECT]
 
-lines[,.(nb=.N),by=.(x_start,y_start,x_end,y_end)][nb>1][order(x_start,x_end)]
+lines <- unique(lines, by=c("x_start","y_start","x_end","y_end","U_MAX"))
 
-ends <- melt(lines[,.(ID_OBJECT,x_start,x_end,y_start,y_end)], 
-             id.vars = c("ID_OBJECT"))
-ends[,c("coord","end"):=.(substr(variable,1,1),substr(variable,3,10))]
-ends <- spread(ends[,.(ID_OBJECT,end, coord,value)], coord, value)
+# extraire les noeuds
+ends <- melt(lines[,.(ID_OBJECT, U_MAX, x_start,x_end,y_start,y_end)],
+             id.vars = c("ID_OBJECT","U_MAX"))
+ends[,c("coord","side"):=.(substr(variable,1,1),substr(variable,3,10))]
+ends <- spread(ends[,.(ID_OBJECT,U_MAX,side, coord,value)], coord, value)
 setDT(ends)
-ends[,node:=.GRP, by=.(x,y)]
 
-ends[,.(nb=.N),by=node][nb==1]
+# postes les plus proches
+dists <- crossdist(ends$x,ends$y,postes$x,postes$y)
+prox <- apply(dists, 1, which.min)
+dists <- apply(dists, 1, min)
+ends$post_prox <- postes$CODNAT[prox]
+ends$dist <- dists
+
+ends[,node:=.GRP, by=.(x,y)]
+ends[,nb:=.N,by=node]
+
+lines <- ends[side=="end",
+              .(ID_OBJECT,node1=node,nb1=nb)][lines, on="ID_OBJECT", mult="first"]
+lines <- ends[side=="start",
+              .(ID_OBJECT,node2=node,nb2=nb)][lines, on="ID_OBJECT", mult="first"]
+setcolorder(lines, c("node1","node2","nb1","nb2","ID_OBJECT",colnames(lines)[6:dim(lines)[2]]))
+
+graph <- graph_from_data_frame(lines[nb1==2 & nb2==2],directed=FALSE)
+
+cl <- clusters(graph)
+
+lines[match(as.numeric(names(cl$membership)), node1), group_line:=cl$membership]
+lines[match(as.numeric(names(cl$membership)), node2), group_line:=cl$membership]
+
+View(lines[group_line==454])
+
+lines[!is.na(group_line),
+      path2 := {
+        sp <- mapply(function(p,i){
+                    Lines(Line(cbind(p[,,1],p[,,2])),ID=i)
+        },paths,seq_along(paths))
+        sp <- SpatialLines(sp,proj4string=CRS("+init=epsg:2154"))
+        merged <- gLineMerge(sp)
+        x <- merged@lines[[1]]@Lines[[1]]@coords[,1]
+        y <- merged@lines[[1]]@Lines[[1]]@coords[,2]
+        a <- array(NA, dim = c(1,length(x),2))
+        a[,,1] <- x
+        a[,,2] <- y
+        rep(list(a),.N)
+      }, by=group_line]
+
+
+lines[nb1==2 & nb2==2, group_line:=cl$membership]
+
+length(cl$membership)
+
+
+
+# noeuds à fusionner (au milieu d'une ligne et loin d'un poste)
+ends[nb==2 & dist>5000, fus_node:= .GRP, by=node]
+lines_fus <- lines[ID_OBJECT %in% ends[!is.na(fus_node),ID_OBJECT]]
+lines <- lines[!(ID_OBJECT %in% ends[!is.na(fus_node),ID_OBJECT])]
+lines_sp <- lines_fus[is.na(fus_node)]
+while (lines_fus[,.N]>0) {
+  base <- lines_fus[1,]
+  
+}
+for () {
+  lines[fus_node == i]
+}
+
+
+
+spl_lines <- apply(lines, 1, function(ligne){
+  ligne <- as.list(ligne)
+  Lines(Line(cbind(ligne$paths[,,1],ligne$paths[,,2])), 
+        ID=ligne$ID_OBJECT)
+}) %>% SpatialLines(proj4string=CRS("+init=epsg:2154"))
+setDF(lines)
+row.names(lines) <- lines$ID_OBJECT
+spl_lines <- SpatialLinesDataFrame(spl_lines, lines)
+setDT(lines)
+
+spl_lines <- spTransform(spl_lines, "+init=epsg:4326")
+
+sub <- ends[dist>2000 & nb>2,][order(dist)]
+
+leaflet(subset(spl_lines, spl_lines$node2 %in% sub$node |
+                 spl_lines$node1  %in% sub$node )) %>%
+  addTiles() %>%
+  addPolylines(popup=~paste0("<h3>",ID_OBJECT,"</h3>",
+                            ADR_LIT_1, "<br>",
+                            ADR_LIT_2, "<br>",
+                            ADR_LIT_3, "<br>",
+                            ETAT, "<br>",
+                            U_MAX, "<br>",
+                            as.POSIXct(MAJ_GEO/1000,origin=as.POSIXct("1970-01-01"))))
+
+
+
+
 
 
 lines <- lines[,-c("paths"),with=FALSE]

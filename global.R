@@ -1,3 +1,5 @@
+.libPaths("C:/R_packages")
+
 library(data.table)
 library(jsonlite)
 library(httr)
@@ -11,3 +13,6 @@ library(mapview)
 library(rgdal)
 library(deldir)
 library(tidyr)
+library(spatstat)
+library(igraph)
+#devtools::install_github('bhaskarvk/leaflet.extras')
