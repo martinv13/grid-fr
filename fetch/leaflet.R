@@ -62,7 +62,7 @@ lines_car <- adr_lines[,.(`Identifiant géographique / Asset location`=ADR_LIT,
                           ID_PATH,sub_num,matched=ADR_LIT)][lines_car, 
                           on="Identifiant géographique / Asset location", mult="first"]
 lines_car[is.na(matched), 
-          c("adr","matched","matched_id","dist"):= {
+          c("adr","matched","ID_PATH","dist"):= {
             id_dist <- adist(`Identifiant géographique / Asset location`,adr_lines$ADR_LIT)
             id_dist[is.na(id_dist)] <- 1000
             id_min <- apply(id_dist, 1, which.min)
@@ -72,7 +72,7 @@ lines_car[is.na(matched),
               adr_lines$ID_PATH[id_min],
               id_dist)
           }]
-View(lines_car[!is.na(dist)])
+#View(lines_car[!is.na(dist)])
 
 # extraire les noeuds
 ends <- melt(lines[,.(ID_OBJECT, U_MAX, x_start,x_end,y_start,y_end)],
@@ -104,7 +104,26 @@ cl <- clusters(graph)
 lines[match(as.numeric(names(cl$membership)), node1), group_line:=cl$membership]
 lines[match(as.numeric(names(cl$membership)), node2), group_line:=cl$membership]
 
-View(lines[group_line==454])
+
+# étude des lignes d'un même ID_PATH
+linesf <- lines[!(ID_OBJECT %in% 
+                   c("77798188_14134","71594843_19859","71594743_7376",
+                     "77008104_13844","71945077_19397",
+                     "77200185_3022","77200085_6597"))]
+selpaths <- linesf[,{
+  nbs <- table(c(node1,node2))
+  .("ID_OBJECT"=ID_OBJECT,
+    "nbp1"=c(nbs[match(node1, names(nbs))]),
+    "nbp2"=c(nbs[match(node2, names(nbs))]))
+}, by=ID_PATH]
+
+# paths qui ne sont pas des lignes
+non_lin <- selpaths[nbp1>2 | nbp2>2, ID_PATH]
+
+
+
+
+
 
 lines[!is.na(group_line),
       path2 := {
@@ -128,18 +147,6 @@ length(cl$membership)
 
 
 
-# noeuds à fusionner (au milieu d'une ligne et loin d'un poste)
-ends[nb==2 & dist>5000, fus_node:= .GRP, by=node]
-lines_fus <- lines[ID_OBJECT %in% ends[!is.na(fus_node),ID_OBJECT]]
-lines <- lines[!(ID_OBJECT %in% ends[!is.na(fus_node),ID_OBJECT])]
-lines_sp <- lines_fus[is.na(fus_node)]
-while (lines_fus[,.N]>0) {
-  base <- lines_fus[1,]
-  
-}
-for () {
-  lines[fus_node == i]
-}
 
 
 
@@ -155,22 +162,31 @@ setDT(lines)
 
 spl_lines <- spTransform(spl_lines, "+init=epsg:4326")
 
-sub <- ends[dist>2000 & nb>2,][order(dist)]
-
+spl_sub <- subset(spl_lines, spl_lines$ID_OBJECT %in% selpaths$ID_OBJECT)
 colrs <- ifelse(spl_lines$ID_PATH %in% lines_car$ID_PATH, "#ff0000", "#0000ff" )
-colrs <- ifelse(spl_lines$group_line!=1 , "#ff0000", "#0000ff" )
+colrs <- ifelse(spl_sub$ID_PATH %in% non_lin, "#ff0000", "#0000ff" )
+#colrs <- ifelse(spl_lines$group_line!=1 , "#ff0000", "#0000ff" )
 
-leaflet(spl_lines) %>%
-  addTiles() %>%
-  addPolylines(popup=~paste0("<h3>",ID_OBJECT,"</h3>",
+spl_postes <- SpatialPointsDataFrame(cbind(postes$x,postes$y),postes,proj4string=CRS("+init=epsg:2154"))
+spl_postes <- spTransform(spl_postes, "+init=epsg:4326")
+
+
+leaflet() %>%
+  addProviderTiles(providers$CartoDB.Positron) %>%
+  addCircleMarkers(data=spl_postes) %>%
+  addPolylines(data=spl_lines,
+    popup=~paste0("<h3>",ID_OBJECT,"</h3>",
                              "layer : ", layer, "<br>",
                              "ADR1 : ", ADR_LIT_1, "<br>",
                             "ADR2 : ", ADR_LIT_2, "<br>",
                             "ADR3 : ", ADR_LIT_3, "<br>",
                             "ETAT : ", ETAT, "<br>",
                             "U : ", U_MAX, "<br>",
+                            "ID_PATH : ", ID_PATH, "<br>",
                             "MAJ : ", as.POSIXct(MAJ_GEO/1000,origin=as.POSIXct("1970-01-01"))),
-               color=colrs)
+               color=colrs,
+              weight=~ifelse(U_MAX==7,6,3)
+    )
 
 
 
