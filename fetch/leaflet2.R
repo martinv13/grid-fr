@@ -34,9 +34,14 @@ lines <- rbindlist(lines, idcol="layer")
 
 lines[,ID_OBJECT:=paste(ID, OBJECTID, sep="_")]
 lines <- unique(lines, by="ID_OBJECT")[U_MAX>5 & ETAT=="E" & layer==1 ,]
-lines[,ID_PATH:=.GRP, by=.(IDR_LIT_1,ADR_LIT_1,IDR_LIT_2,ADR_LIT_2,
-                               IDR_LIT_3,ADR_LIT_3,IDR_LIT_4,ADR_LIT_4,
-                               IDR_LIT_5,ADR_LIT_5)]
+lines <- melt(lines, measure.vars = 9:18)
+
+lines[,varn:=as.numeric(substr(variable,9,9))]
+lines[,variable:=substr(variable,1,7)]
+lines <- spread(lines, variable, value)
+
+lines <- lines[!is.na(IDR_LIT)]
+lines[,ID_OBJECT:=paste(ID_OBJECT,varn,sep="_")]
 
 lines[, c("x_start","y_start","x_end","y_end"):={
   xs <- .SD$paths[[1]][,,1]
@@ -44,35 +49,7 @@ lines[, c("x_start","y_start","x_end","y_end"):={
   .(xs[1],ys[1],tail(xs,n=1),tail(ys,n=1))
 }, by=ID_OBJECT]
 
-lines <- unique(lines, by=c("ID_PATH","x_start","y_start","x_end","y_end","U_MAX"))
-
-
-# correspondance modèle de réseau
-lines_car <- fread("lignes_raw.csv")
-adr_lines <- lines[,-c("paths"),with=FALSE] %>%
-  melt(measure.vars = 9:18)
-adr_lines[,variable:=as.character(variable)]
-adr_lines[,c("variable", "sub_num"):=.(substr(variable, 1, 7), 
-                                   as.numeric(substr(variable, 9, 9)))]
-adr_lines <- spread(adr_lines,variable, value)
-setDT(adr_lines)
-adr_lines <- adr_lines[!is.na(ADR_LIT)]
-
-lines_car <- adr_lines[,.(`Identifiant géographique / Asset location`=ADR_LIT,
-                          ID_PATH,sub_num,matched=ADR_LIT)][lines_car, 
-                          on="Identifiant géographique / Asset location", mult="first"]
-lines_car[is.na(matched), 
-          c("adr","matched","ID_PATH","dist"):= {
-            id_dist <- adist(`Identifiant géographique / Asset location`,adr_lines$ADR_LIT)
-            id_dist[is.na(id_dist)] <- 1000
-            id_min <- apply(id_dist, 1, which.min)
-            id_dist <- apply(id_dist, 1, min)
-            .(`Identifiant géographique / Asset location`,
-              adr_lines$ADR_LIT[id_min],
-              adr_lines$ID_PATH[id_min],
-              id_dist)
-          }]
-#View(lines_car[!is.na(dist)])
+lines <- unique(lines, by=c("IDR_LIT","x_start","y_start","x_end","y_end","U_MAX"))
 
 # extraire les noeuds
 ends <- melt(lines[,.(ID_OBJECT, U_MAX, x_start,x_end,y_start,y_end)],
@@ -80,13 +57,6 @@ ends <- melt(lines[,.(ID_OBJECT, U_MAX, x_start,x_end,y_start,y_end)],
 ends[,c("coord","side"):=.(substr(variable,1,1),substr(variable,3,10))]
 ends <- spread(ends[,.(ID_OBJECT,U_MAX,side, coord,value)], coord, value)
 setDT(ends)
-
-# postes les plus proches
-dists <- crossdist(ends$x,ends$y,postes$x,postes$y)
-prox <- apply(dists, 1, which.min)
-dists <- apply(dists, 1, min)
-ends$post_prox <- postes$CODNAT[prox]
-ends$dist <- dists
 
 ends[,node:=.GRP, by=.(x,y)]
 ends[,nb:=.N,by=node]
@@ -97,29 +67,40 @@ lines <- ends[side=="start",
               .(ID_OBJECT,node2=node,nb2=nb)][lines, on="ID_OBJECT", mult="first"]
 setcolorder(lines, c("node1","node2","nb1","nb2","ID_OBJECT",colnames(lines)[6:dim(lines)[2]]))
 
-graph <- graph_from_data_frame(lines,directed=FALSE)
-
-cl <- clusters(graph)
-
-lines[match(as.numeric(names(cl$membership)), node1), group_line:=cl$membership]
-lines[match(as.numeric(names(cl$membership)), node2), group_line:=cl$membership]
-
-
-# étude des lignes d'un même ID_PATH
+# étude des lignes d'un même IDR_LIT
 linesf <- lines[!(ID_OBJECT %in% 
-                   c("77798188_14134","71594843_19859","71594743_7376",
-                     "77008104_13844","71945077_19397",
-                     "77200185_3022","77200085_6597"))]
+                    c("77798188_14134_1","71594843_19859_1","71594743_7376_1",
+                      "77008104_13844_1","71945077_19397_1","71289107_33506_1",
+                      "77200185_3022_1","77200085_6597_1","77983288_7575_1",
+                      "77578704_32613_1","77578404_32423_1","77578004_26658_1",
+                      "77328083_29478_1","77561325_14117_1","74355167_33545_1",
+                      "74355067_30585_1","76136688_29524_1","77983188_32817_1",
+                      "77903128_3496_1","78013904_21762_1","77881928_21178_1",
+                      "77561425_32566_1","75130489_9956_1","75137589_1415_1"))]
+
 selpaths <- linesf[,{
   nbs <- table(c(node1,node2))
   .("ID_OBJECT"=ID_OBJECT,
     "nbp1"=c(nbs[match(node1, names(nbs))]),
+    x_start=x_start,
+    y_start=y_start,
     "nbp2"=c(nbs[match(node2, names(nbs))]),
+    x_end=x_end,
+    y_end=y_end,
     "nbp_ends"=sum(nbs==1))
-}, by=ID_PATH]
+}, by=IDR_LIT]
 
 # paths qui ne sont pas des lignes
-non_lin <- selpaths[nbp1>2 | nbp2>2, ID_PATH]
+non_lin <- selpaths[nbp1>2 | nbp2>2 | nbp_ends != 2, IDR_LIT]
+
+crd <-  selpaths[IDR_LIT=="VLEJUL62ZROB5",]
+View(data.matrix(dist(cbind(c(crd$x_start[crd$nbp1==1],
+                              crd$x_end[crd$nbp2==1]),
+                            c(crd$y_start[crd$nbp1==1],
+                              crd$y_end[crd$nbp2==1])))))
+
+# fusion des paths disjoints
+
 
 # fusion des paths
 
@@ -144,17 +125,6 @@ merged <- lines[,.(IDR_LIT_1,ADR_LIT_1,IDR_LIT_2,ADR_LIT_2,
                      merged, on="ID_PATH", mult="first"]
 
 
-spl_lines <- apply(merged, 1, function(ligne){
-  ligne <- as.list(ligne)
-  Lines(Line(cbind(ligne$path2[,,1],ligne$path2[,,2])),
-        ID=ligne$ID_PATH)
-}) %>% SpatialLines(proj4string=CRS("+init=epsg:2154"))
-setDF(merged)
-row.names(merged) <- merged$ID_PATH
-spl_lines <- SpatialLinesDataFrame(spl_lines, merged)
-setDT(merged)
-
-spl_lines <- spTransform(spl_lines, "+init=epsg:4326")
 
 spl_lines <- apply(lines, 1, function(ligne){
   ligne <- as.list(ligne)
@@ -168,10 +138,10 @@ setDT(lines)
 
 spl_lines <- spTransform(spl_lines, "+init=epsg:4326")
 
-spl_sub <- subset(spl_lines, spl_lines$ID_PATH==26)
+spl_sub <- subset(spl_lines, spl_lines$IDR_LIT%in% non_lin )
 
 colrs <- ifelse(spl_lines$ID_PATH %in% lines_car$ID_PATH, "#ff0000", "#0000ff" )
-colrs <- ifelse(spl_lines$ID_PATH %in% non_lin, "#ff0000", "#0000ff" )
+colrs <- ifelse(spl_lines$IDR_LIT %in% non_lin, "#ff0000", "#0000ff" )
 colrs <- ifelse(spl_lines$group_line != 1, "#ff0000", "#0000ff" )
 #colrs <- ifelse(spl_lines$group_line!=1 , "#ff0000", "#0000ff" )
 
@@ -183,10 +153,9 @@ leaflet() %>%
   addTiles() %>%
 #  addCircleMarkers(data=spl_postes) %>%
   addPolylines(data=spl_sub,
-    popup=~paste0("<h3>",ID_PATH,"</h3>",
-                             "ADR1 : ", ADR_LIT_1, "<br>",
-                            "ADR2 : ", ADR_LIT_2, "<br>",
-                            "ADR3 : ", ADR_LIT_3, "<br>",
+    popup=~paste0("<h3>",IDR_LIT ,"</h3>",
+                  "ID : ", ID_OBJECT, "<br>",
+                             "ADR : ", ADR_LIT, "<br>",
                             "ETAT : ", ETAT, "<br>",
                             "U : ", U_MAX, "<br>"),
 #               color=colrs,
@@ -311,44 +280,3 @@ test2 <- subset(test, test$MAJ_GEO==max(test$MAJ_GEO))
 gLineMerge()
 
 long <- gLength(spl_lines, byid=TRUE)
-
-lines$longueur <- long[match(lines$ID_OBJECT, names(long))]
-
-lines[grepl("61", IDR_LIT_1),]
-
-names(spl_lines)
-spl_postes <- SpatialPointsDataFrame(cbind(postes$x,postes$y),postes,proj4string=CRS("+init=epsg:2154"))
-
-test <- subset(spl_lines, spl_lines$IDR_LIT_1 =="MOUL8L61VLEJU")
-leaflet() %>%
-  addTiles() %>%
-  addPolylines(data=spTransform(spl_lines, "+init=epsg:4326"), color="#0000ff")
-%>%
-  addMarkers(data=spTransform(spl_postes, "+init=epsg:4326"), popup=~CODNAT)
-  
-lines[!is.na(IDR_LIT_2),.N]
-lines[!is.na(IDR_LIT_3),.N]
-lines[!is.na(IDR_LIT_4 ),.N]
-lines[!is.na(IDR_LIT_5),]$paths
-
-
-
-
-
-gLength(spl_lines, byid=TRUE)
-
-lines2 <- unique(lines, by=8:20)[
-  U_MAX>5,]
-
-lines2 <- lines[U_MAX>5,]
-length(unique(lines2$IDR_LIT_1))
-
-sum(duplicated(lines[,-c("paths"),with=FALSE]))
-
-
-for (i in 1:3) {
-  write.table(lines[[i]][,-c("paths"),with=FALSE], file=paste0(i,".csv"), sep=";", dec=",", row.names = FALSE)
-}
-
-
-
