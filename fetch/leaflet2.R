@@ -252,27 +252,36 @@ merged[!is.na(start) & start>end, c("start","end"):=.(end,start)]
 
 merged <- unique(merged[!is.na(start) & u_code>5], by=c("start","circn","end","u_code"))
 
-# recherche des postes correspondant
+# recherche des postes correspondant et inversion si nécessaire
 merged[, code_start := postes$CODNAT[match(start, postes$CODNAT)]]
 merged[, code_end := postes$CODNAT[match(end, postes$CODNAT)]]
+merged[, "pres":={
+  id <- match(code_start,postes$CODNAT)
+  (postes$x[id]-x_start)^2+(postes$y[id]-y_start)^2-
+    (postes$x[id]-x_end)^2-(postes$y[id]-y_end)^2
+}]
+merged[, code_temp := code_start]
+merged[pres>0, code_start := code_end]
+merged[pres>0, code_end := code_temp]
+merged <- merged[,-c("pres","code_temp"),with=FALSE]
 
 # recherche des postes proches
-merged <- merged[is.na(code_end) & !grepl("PIQUAGE",ADR_LIT),
-               c("code_end","dist_end"):={
+merged <- merged[,c("code_end","dist_end"):={
                  dists <- crossdist(.SD$x_end,.SD$y_end, 
                                     postes$x,postes$y)
+                 dists[outer(.SD$u_code,postes$U_MAX,`>`)]<-100000
                  disti <- apply(dists, 1, which.min)
                  dists <- apply(dists, 1, min)
                  .(code_end=postes$CODNAT[disti],dist_end=dists)}]
-merged <- merged[is.na(code_start) & !grepl("PIQUAGE",ADR_LIT),
-               c("code_start","dist_start"):={
+merged <- merged[,c("code_start","dist_start"):={
                  dists <- crossdist(.SD$x_start,.SD$y_start, 
                                     postes$x,postes$y)
+                 dists[outer(.SD$u_code,postes$U_MAX,`>`)]<-100000
                  disti <- apply(dists, 1, which.min)
                  dists <- apply(dists, 1, min)
                  .(code_start=postes$CODNAT[disti],dist_start=dists)}]
-merged[is.na(code_start)|(dist_start>100), code_start:=NA]
-merged[is.na(code_end)|(dist_end>100), code_end:=NA]
+merged[is.na(code_start)|(dist_start>1500), code_start:=NA]
+merged[is.na(code_end)|(dist_end>1500), code_end:=NA]
 
 # noeuds restant
 ends <- melt(merged[is.na(code_end)|is.na(code_start),
@@ -299,22 +308,62 @@ merged <- merged[,-c("node_start","node_end"), with=FALSE]
 
 
 # sous-graphes connectés ?
+merged <- merged[code_start!=code_end,]
 graph <- graph_from_data_frame(merged[,.(code_start=code_start,
                                          code_end=code_end)],directed=FALSE)
 cl <- clusters(graph)
 isole <- names(cl$membership)[cl$membership>1]
 
+merged <- merged[!((code_start %in% isole) | (code_end %in% isole)),]
+deg <- degree(graph)
+leaves <- names(deg)[deg==1]
+
+# test des lignes N qui ne sont pas redondantes
+merged[,redundant:=NA]
+for (i in seq_along(merged$code_start)) {
+  if (i %% 10 == 0) print(i)
+  graph <- graph_from_data_frame(merged[-i,.(code_start=code_start,
+                                           code_end=code_end)],directed=FALSE)
+  cl <- clusters(graph)
+  merged$redundant[i] <-  (cl$no == 1)
+}
+merged[code_start %in% leaves, redundant:=FALSE]
+merged[code_end %in% leaves, redundant:=FALSE]
+
+graph <- graph_from_data_frame(merged[,.(code_start=code_start,
+                                         code_end=code_end)],directed=FALSE)
+# on ne garde que les postes utilisés
+postes2 <- rbind(postes,ends[,.(U_MAX=U_MAX,x=x,y=y,CODNAT=node)], fill=TRUE)
+postes2 <- postes2[CODNAT %in% names(V(graph)),]
+
+spl_merged <- apply(merged, 1, function(ligne){
+  ligne <- as.list(ligne)
+  Lines(Line(cbind(ligne$paths[,,1],ligne$paths[,,2])),
+        ID=ligne$IDR_LIT)
+}) %>% SpatialLines(proj4string=CRS("+init=epsg:2154"))
+setDF(merged)
+row.names(merged) <- merged$IDR_LIT
+spl_merged <- SpatialLinesDataFrame(spl_merged, merged)
+setDT(merged)
+spl_merged <- spTransform(spl_merged, "+init=epsg:4326")
+
 
 colrs <- ifelse(spl_merged$code_start %in% isole | 
                   spl_merged$code_end %in% isole   , "#ff0000", "#0000ff" )
+colrs <- ifelse(!spl_merged$redundant , "#ff0000", "#0000ff" )
+colrs <- ifelse(is.na(spl_merged$code_start) | 
+                  is.na(spl_merged$code_end)   , "#ff0000", "#0000ff" )
 
 spl_postes <- SpatialPointsDataFrame(cbind(postes$x,postes$y),postes,proj4string=CRS("+init=epsg:2154"))
 spl_postes <- spTransform(spl_postes, "+init=epsg:4326")
+spl_piqu <- SpatialPointsDataFrame(cbind(ends$x,ends$y),ends,proj4string=CRS("+init=epsg:2154"))
+spl_piqu <- spTransform(spl_piqu, "+init=epsg:4326")
 
 
 leaflet() %>%
   addTiles() %>%
   addCircleMarkers(data=spl_postes,radius=5,popup=~CODNAT) %>%
+  addCircleMarkers(data=spl_piqu,radius=5,popup=~node, color = "#00ff00") %>%
   addPolylines(data=spl_merged,
                popup=~paste0("<h3>",IDR_LIT ,"</h3>",
                              #                  "ID : ", ID_OBJECT, "<br>",
@@ -327,30 +376,28 @@ leaflet() %>%
                weight=~ifelse(U_MAX==7,6,3)
   )
 
-postes[grepl("PIQ",CODNAT)]
+# correspondance avec les données élec
+lines_car <- fread("lignes_raw.csv")
+lines_car <- merged[,.(`Identifiant géographique / Asset location`=ADR_LIT,
+                          IDR_LIT,matched=ADR_LIT)][lines_car, 
+                                                            on="Identifiant géographique / Asset location", mult="first"]
+lines_car[is.na(matched),
+          c("adr","matched","IDR_LIT","matched_long","dist"):= {
+            id_dist <- adist(`Identifiant géographique / Asset location`,merged$ADR_LIT)
+            id_dist[is.na(id_dist)] <- 1000
+            id_min <- apply(id_dist, 1, which.min)
+            id_dist <- apply(id_dist, 1, min)
+            .(`Identifiant géographique / Asset location`,
+              merged$ADR_LIT[id_min],
+              merged$IDR_LIT[id_min],
+              merged$long[id_min],
+              id_dist)
+          }]
+lines_car$`Longueur / length (km)`
+ggplot(lines_car, aes(y=`IST_H1 (Amp)`, x=`Longueur / length (km)`)) +
+  geom_point()
+View(lines_car[`IST_H1 (Amp)`>2000 & `IST_H1 (Amp)`<3000,])
 
-
-manq <- merged[is.na(code_start) & !grepl("PIQUAGE",ADR_LIT)]
-
-
-sum(dists>100)
-
-miss$prox_start <- postes$ADR_SITE[distm]
-
-
-
-
-
-
-
-
-
-
-
-
-lignes_elec <- fread("data/lines_rte.csv")
-lignes_elec[is.na(match(lignes_elec$`Identifiant géographique / Asset location`,
-      c(lines$ADR_LIT_1,lines$ADR_LIT_2,lines$ADR_LIT_3,lines$ADR_LIT_4,lines$ADR_LIT_5)))]
 
 
 test <- lines[!is.na(IDR_LIT_4),]
