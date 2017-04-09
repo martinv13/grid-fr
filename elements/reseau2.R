@@ -291,7 +291,8 @@ ends[,c("coord","side"):=.(substr(variable,1,1),substr(variable,3,10))]
 ends <- distinct(ends)
 ends <- spread(ends[,.(IDR_LIT,U_MAX,side, coord,value)], coord, value)
 setDT(ends)
-ends[,node:=paste0("NOEUD_",.GRP), by=.(x,y)]
+ends <- ends[,.(node=paste0("NOEUD_",.GRP),
+            U_MAX=max(U_MAX)), by=.(x,y,IDR_LIT)]
 
 merged <- ends[,.(node_start=node,x_start=x,y_start=y)][
   merged, 
@@ -348,11 +349,11 @@ setDT(merged)
 spl_merged <- spTransform(spl_merged, "+init=epsg:4326")
 
 
-colrs <- ifelse(spl_merged$code_start %in% isole | 
-                  spl_merged$code_end %in% isole   , "#ff0000", "#0000ff" )
+# colrs <- ifelse(spl_merged$code_start %in% isole | 
+#                   spl_merged$code_end %in% isole   , "#ff0000", "#0000ff" )
 colrs <- ifelse(!spl_merged$redundant , "#ff0000", "#0000ff" )
-colrs <- ifelse(is.na(spl_merged$code_start) | 
-                  is.na(spl_merged$code_end)   , "#ff0000", "#0000ff" )
+# colrs <- ifelse(is.na(spl_merged$code_start) | 
+#                   is.na(spl_merged$code_end)   , "#ff0000", "#0000ff" )
 
 spl_postes <- SpatialPointsDataFrame(cbind(postes$x,postes$y),postes,proj4string=CRS("+init=epsg:2154"))
 spl_postes <- spTransform(spl_postes, "+init=epsg:4326")
@@ -376,7 +377,7 @@ leaflet() %>%
                weight=~ifelse(U_MAX==7,6,3)
   )
 
-# correspondance avec les données élec
+# correspondance avec les données élec des lignes
 lines_car <- fread("lignes_raw.csv")
 lines_car <- merged[,.(`Identifiant géographique / Asset location`=ADR_LIT,
                           IDR_LIT,matched=ADR_LIT)][lines_car, 
@@ -395,6 +396,24 @@ lines_car[is.na(matched),
           }]
 lines_car[!is.na(dist) & abs(matched_long/`Longueur / length (km)`-1)>.2,
           IDR_LIT:=NA]
+
+# correspondance des transfos
+postes_400 <- unique(as.vector(unlist(merged[U_MAX==7, .(code_start,code_end)])))
+postes_225 <- unique(as.vector(unlist(merged[U_MAX==6, .(code_start,code_end)])))
+
+postes2[,l400:=CODNAT %in% postes_400]
+postes2[,l225:=CODNAT %in% postes_225]
+postes2[l400 & U_MAX==6]
+postes2[!l400 & U_MAX==7]
+
+postes2[transfo]
+
+View(postes2[!transfo & U_MAX==7,])
+
+
+
+
+
 
 hist(abs(lines_car$dist/lines_car$`Longueur / length (km)`))
 ggplot(lines_car, aes(y=`IST_H1 (Amp)`, x=`Longueur / length (km)`)) +
