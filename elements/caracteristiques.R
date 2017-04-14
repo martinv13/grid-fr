@@ -23,13 +23,6 @@ lines_car[is.na(matched),
 lines_car[!is.na(dist) & abs(matched_long/`Longueur / length (km)`-1)>.2,
           IDR_LIT:=NA]
 
-# correspondance des transfos
-postes_car <- fread("transfos_raw.csv", dec=",")
-postes_car[,adr:=substr(`Identifiant géographique / Asset location`,23,200)]
-
-postes_car <- postes[,.(CODNAT=CODNAT, adr=ADR_SITE)][
-  postes_car, on="adr", mult="first"]
-
 lignes <- lines_car[,.(IDR_LIT, 
                        X=`Xd (Ohm)`,
                        long_X=`Longueur / length (km)`,
@@ -42,6 +35,55 @@ lignes[U_MAX==7, .(x=IMAP_H , y=X/long_X, g=CONFIG)] %>%
   ggplot(aes(y=y,x=x,group=g,colour=g)) + geom_point()
 
 
+# correspondance des transfos
+postes_car <- fread("transfos_raw.csv", dec=",")
+postes_car[,adr:=substr(`Identifiant géographique / Asset location`,23,200)]
+
+postes_car <- postes[,.(CODNAT=CODNAT, adr=ADR_SITE)][
+  postes_car, on="adr", mult="first"]
+
+postes_car[,X:=as.numeric(`Xd3 à Prise moy / Three-phase reactance at medium tap`)]
+postes_car[,IMAP_E:=as.numeric(`IPE_T / ISTE: max intensity (Amp) in summer period`)]
+postes_car[,IMAP_H:=as.numeric(`IPH1_T / ISTH1: max intensity in Winter period`)]
+
+postes_car[,X:=ifelse(is.na(X),mean(X, na.rm=TRUE),X), by=CODNAT]
+postes_car[,IMAP_E:=ifelse(is.na(IMAP_E),mean(IMAP_E, na.rm=TRUE),IMAP_E), by=CODNAT]
+postes_car[,IMAP_H:=ifelse(is.na(IMAP_H),mean(IMAP_H, na.rm=TRUE),IMAP_H), by=CODNAT]
+
+postes <- postes_car[,.(X=1/sum(1/X),IMAP_E = sum(IMAP_E),IMAP_H = sum(IMAP_H)),
+                     by=CODNAT][
+                          postes, on="CODNAT", mult="first"]
+
+postes[!is.na(X), c("type","data"):=.("transfo",TRUE)]
+
+# nombre de lignes 400 et 225 rattachées au poste
+postes[,n400:=lignes[u_code==7 & (code_start==CODNAT | code_end==CODNAT), .N], by=CODNAT]
+postes[,n225:=lignes[u_code==6 & (code_start==CODNAT | code_end==CODNAT), .N], by=CODNAT]
+
+
+# on repère les postes qui n'ont que des lignes intitulées "piquage"
+postes[, piquage:={
+  adr_lignes <- lignes[code_start==CODNAT | code_end==CODNAT, ADR_LIT]
+  length(adr_lignes)>2 & all(grepl("PIQUAGE",adr_lignes))
+}, by=CODNAT]
+postes[!!piquage,type:="piquage"]
+postes[,piquage:=NULL]
+
+
+
+plot(postes$n225+postes$n400, postes$IMAP_H )
+
+m <- lm(IMAP_H ~ n225 + n400, data=postes)
+postes$IH_pred <- predict(m, postes)
+m <- lm(IMAP_E ~ n225 + n400, data=postes)
+postes$IE_pred <- predict(m, postes)
+
+postes[is.na(IMAP_H),IMAP_H:=IH_pred]
+postes[is.na(IMAP_E),IMAP_E:=IE_pred]
+postes[,IH_pred:=NULL]
+postes[,IE_pred:=NULL]
+
+postes[n225==0 & n400==2]
 
 
 postes_400 <- unique(as.vector(unlist(merged[U_MAX==7, .(code_start,code_end)])))
